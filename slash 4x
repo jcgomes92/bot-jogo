@@ -14,14 +14,14 @@ o bot abaixo não está funcionando como devia, não está procurando monstros n
   'use strict';
 
   var CONFIG = {
-    targetNames: ['Orc Grunt','Orc Bonecrusher'],
+    targetNames: [],
     minHp: 300000,
     waitAfterJoinMs: 5000,
     waitAfterSlashMs: 5000,
     slashCount: 4,
     slashRegex: /\bslash\b/i,
     backRegex: /back\s*to\s*wave/i,
-    joinRegex: /join\s+the\s+battle/i,
+    joinRegex: /join\s+(?:the\s+)?battle/i,
     continueRegex: /continue\s+(?:the\s+)?battle/i,
     continueThreshold: 6,
     repeat: false,
@@ -84,7 +84,7 @@ o bot abaixo não está funcionando como devia, não está procurando monstros n
   }
 
   // ---------- stamina helpers ----------
-  function toNumber(s){ return Number(String(s||'').replace(/[^0-4]/g,'')) || 0; }
+  function toNumber(s){ return Number(String(s||'').replace(/[^0-9]/g,'')) || 0; }
   function readStamina(){
     var scopes = Array.prototype.slice.call(document.querySelectorAll(
       'header,#header,.header,.topbar,.navbar,.status,.stats,.hud,.userbar,.user-info,.resource,.resource-bar,.resources,.player-stats'
@@ -142,7 +142,7 @@ o bot abaixo não está funcionando como devia, não está procurando monstros n
     var candidates = [];
     getTitles().forEach(function(t){
       var name = text(t);
-      var ok = CONFIG.targetNames.some(function(n){ return name.toLowerCase().includes(n.toLowerCase()); });
+      var ok = !CONFIG.targetNames || CONFIG.targetNames.length === 0 || CONFIG.targetNames.some(function(n){ return name.toLowerCase().includes(n.toLowerCase()); });
       if (!ok) return;
       var card = ascendToCard(t);
       if (!card) return;
@@ -172,8 +172,7 @@ o bot abaixo não está funcionando como devia, não está procurando monstros n
 
     var active = countContinueInWave();
     if (active > CONFIG.continueThreshold) {
-      console.log('[AutoWave] Há', active, '"Continue the Battle" na página. Parando.');
-      return;
+      console.log('[AutoWave] Nota:', active, '"Continue the Battle" visíveis; ignorando e procurando "Join the Battle"...');
     }
 
     var pick = pickTargetFromWave();
@@ -253,9 +252,9 @@ o bot abaixo não está funcionando como devia, não está procurando monstros n
 
   // ---------- router ----------
   var path = location.pathname.toLowerCase();
-  if (path.indexOf('active_wave.php') !== -1) {
+  if (path.indexOf('active_wave') !== -1 || path.indexOf('wave') !== -1) {
     setTimeout(onWavePage, 800);
-  } else if (path.indexOf('battle.php') !== -1) {
+  } else if (path.indexOf('battle') !== -1) {
     setTimeout(onBattlePage, 800);
   }
 })();
