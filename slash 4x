@@ -1,5 +1,3 @@
-o bot abaixo não está funcionando como devia, não está procurando monstros na pagina da wave e clicando em "join the battle", lembrando que precisa ignorar os montros escrito "continue the battle":
-
 // ==UserScript==
 // @name         Auto Wave → Battle → SLASH x4 → Back (DemonicScans) ES5 r5 [Join-only]
 // @namespace    tm-auto-demonicscans
