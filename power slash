@@ -16,6 +16,8 @@
     minHp: 300000,
     waitAfterJoinMs: 5000,
     waitAfterSlashMs: 5000,
+    slashCount: 4,
+    slashRegex: /\bslash\b/i,
     powerSlashRegex: /power\s*slash/i,
     backRegex: /back\s*to\s*wave/i,
     continueRegex: /continue\s+(?:the\s+)?battle/i,
@@ -214,19 +216,20 @@
       console.log('[AutoWave] Aguardando', CONFIG.waitAfterJoinMs, 'ms após join...');
       return delay(CONFIG.waitAfterJoinMs);
     }).then(function() {
-      if (!hasMinStamina()) return false; // NOVO: rechecagem antes do golpe
-      // Etapa 2: Power Slash
-      return executeStep('Power Slash', function() {
-        return clickWhenReady(CONFIG.powerSlashRegex, 'Power Slash', 5000);
-      });
-    }).then(function(slashed) {
-      if (!slashed) {
-        console.log('[AutoWave] Falha ao usar Power Slash');
-        return;
-      }
-
-      console.log('[AutoWave] Aguardando', CONFIG.waitAfterSlashMs, 'ms após slash...');
-      return delay(CONFIG.waitAfterSlashMs);
+      if (!hasMinStamina()) return false; // NOVO: rechecagem antes dos golpes
+      // Etapa 2: Slash x4
+      return (async function() {
+        for (var i = 1; i <= CONFIG.slashCount; i++) {
+          console.log('[AutoWave] Slash', i, 'de', CONFIG.slashCount);
+          var clicked = await clickWhenReady(CONFIG.slashRegex, 'Slash (' + i + ')', 2000);
+          if (!clicked) {
+            console.log('[AutoWave] Falha ao clicar no Slash #' + i);
+            break;
+          }
+          await delay(CONFIG.waitAfterSlashMs);
+        }
+        return true;
+      })();
     }).then(function() {
       // Etapa 3: Back to Wave
       return executeStep('Back to Wave', function() {
