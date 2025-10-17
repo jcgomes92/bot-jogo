@@ -1,0 +1,254 @@
+// ==UserScript==
+// @name         Auto Wave → Battle → POWER → Back (DemonicScans) ES5 r4
+// @namespace    tm-auto-demonicscans
+// @version      1.4
+// @description  Wave check (Continue≥4 → parar); senão Join → Power Slash → Back; pausa com baixa Stamina
+// @match        https://demonicscans.org/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  var CONFIG = {
+    targetNames: ['Orc Grunt','Orc Bonecrusher'],
+    minHp: 300000,
+    waitAfterJoinMs: 5000,
+    waitAfterSlashMs: 5000,
+    powerSlashRegex: /power\s*slash/i,
+    backRegex: /back\s*to\s*wave/i,
+    continueRegex: /continue\s+(?:the\s+)?battle/i,
+    continueThreshold: 6,
+    repeat: false,
+    minStamina: 10 // NOVO: Se stamina atual < 10, não ataca
+  };
+
+  // ---------- utils ----------
+  function text(el){ return (el && el.textContent || '').trim(); }
+  function isVisible(el){
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+  function isEnabled(el){
+    if (!el) return false;
+    var cls = String(el.className || '').toLowerCase();
+    return !el.disabled && !/disabled|inactive|loading/.test(cls);
+  }
+  function delay(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+  function allScopes(){
+    var list = Array.prototype.slice.call(document.querySelectorAll('.modal,.dialog,.popup,[role="dialog"],.swal2-container,.swal2-popup'));
+    list.push(document);
+    return list;
+  }
+  function findByText(re, sel){
+    var scopes = allScopes();
+    for (var s=0; s<scopes.length; s++){
+      var nodes = Array.prototype.slice.call(scopes[s].querySelectorAll(sel || 'a,button,.btn,[role="button"],input[type="button"],.ability,.skill'));
+      for (var i=0;i<nodes.length;i++){
+        if (re.test(text(nodes[i])) && isVisible(nodes[i])) return nodes[i];
+      }
+    }
+    return null;
+  }
+  function waitForElement(testFn, timeoutMs){
+    return new Promise(function(resolve){
+      var done = false;
+      function finish(v){ if (done) return; done = true; try{obs.disconnect();}catch(e){} clearTimeout(to); clearInterval(poll); resolve(v); }
+      var now = testFn(); if (now) return resolve(now);
+      var obs = new MutationObserver(function(){ var v = testFn(); if (v) finish(v); });
+      obs.observe(document.documentElement, {subtree:true, childList:true, attributes:true});
+      var poll = setInterval(function(){ var v = testFn(); if (v) finish(v); }, 500);
+      var to = setTimeout(function(){ finish(null); }, timeoutMs);
+    });
+  }
+  function clickWhenReady(regex, label, timeoutMs){
+    return waitForElement(function(){
+      var e = findByText(regex);
+      return e && isEnabled(e) ? e : null;
+    }, timeoutMs).then(function(el){
+      if (!el) {
+        console.log('[AutoWave] Elemento não encontrado:', label);
+        return false;
+      }
+      try{ el.scrollIntoView({block:'center'}); }catch(e){}
+      console.log('[AutoWave] Clicando em:', label);
+      el.click();
+      return true;
+    });
+  }
+
+  // ---------- stamina helpers (NOVO) ----------
+  function toNumber(s){ return Number(String(s||'').replace(/[^0-9]/g,'')) || 0; }
+
+  function readStamina(){
+    var scopes = Array.prototype.slice.call(document.querySelectorAll(
+      'header,#header,.header,.topbar,.navbar,.status,.stats,.hud,.userbar,.user-info,.resource,.resource-bar,.resources,.player-stats'
+    ));
+    scopes.push(document.body);
+    var re = /stamina\s*([\d.,]+)\s*\/\s*([\d.,]+)/i;
+    for (var i=0; i<scopes.length; i++){
+      var t = text(scopes[i]);
+      var m = re.exec(t);
+      if (m) {
+        return { current: toNumber(m[1]), total: toNumber(m[2]) };
+      }
+    }
+    return null;
+  }
+
+  function hasMinStamina(){
+    var s = readStamina();
+    if (!s) {
+      // Se não conseguiu ler, por segurança não ataca
+      console.log('[AutoWave] Stamina não encontrada. Pausando por segurança.');
+      return false;
+    }
+    var ok = s.current >= CONFIG.minStamina;
+    if (!ok) console.log('[AutoWave] Stamina baixa', s.current + '/' + s.total, '(<', CONFIG.minStamina, '). Pausando.');
+    return ok;
+  }
+
+  // ---------- wave helpers ----------
+  function ascendToCard(el){
+    var n = el;
+    for (var i=0;i<6 && n;i++){
+      var cls = String(n.className||'');
+      if (/card|raid|monster|row|entry|item/i.test(cls)) return n;
+      n = n.parentElement;
+    }
+    return el && el.parentElement;
+  }
+  function getTitles(){ return Array.prototype.slice.call(document.querySelectorAll('h1,h2,h3,h4,h5,h6,.name,.title,[data-name]')); }
+  function extractHp(card){
+    var t = text(card);
+    var m = t.match(/([\d.,]+)\s*(?:\/\s*[\d.,]+\s*)?HP/i);
+    return m ? toNumber(m[1]) : 0;
+  }
+  function findBattleLink(card){
+    var a = card.querySelector('a[href*="battle.php"]');
+    if (a && a.href) return a.href;
+    var btn = Array.prototype.slice.call(card.querySelectorAll('a,button,.btn')).find(function(el){ return /join\s+the\s+battle/i.test(text(el)); });
+    return btn && btn.href ? btn.href : null;
+  }
+  function pickTargetFromWave(){
+    var candidates = [];
+    getTitles().forEach(function(t){
+      var name = text(t);
+      var ok = CONFIG.targetNames.some(function(n){ return name.toLowerCase().includes(n.toLowerCase()); });
+      if (!ok) return;
+      var card = ascendToCard(t);
+      if (!card) return;
+      var hp = extractHp(card);
+      var link = findBattleLink(card);
+      candidates.push({name:name, hp:hp, link:link, card:card});
+    });
+    var eligible = candidates.filter(function(c){ return c.hp >= CONFIG.minHp; });
+    eligible.sort(function(a,b){ return b.hp - a.hp; });
+    return eligible[0] || null;
+  }
+
+  function countContinueInWave(){
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('a,button,.btn,[role="button"]'));
+    var count = 0;
+    for (var i=0;i<buttons.length;i++){
+      var t = text(buttons[i]);
+      if (CONFIG.continueRegex.test(t)) count++;
+    }
+    return count;
+  }
+
+  // ---------- flows ----------
+  function onWavePage(){
+    if (!hasMinStamina()) return; // NOVO: não prossegue se stamina baixa
+
+    var active = countContinueInWave();
+    if (active > 6) {
+      console.log('[AutoWave] Há', active, '"Continue the Battle" na página. Parando.');
+      return;
+    }
+
+    var pick = pickTargetFromWave();
+    if (!pick) {
+      console.log('[AutoWave] Nenhum alvo elegível encontrado.');
+      return;
+    }
+
+    console.log('[AutoWave] Abrindo:', pick.name, 'HP', pick.hp);
+    if (pick.link) {
+      location.href = pick.link;
+    } else {
+      var btn = Array.prototype.slice.call(pick.card.querySelectorAll('a,button,.btn')).find(function(el){ return /join\s+the\s+battle/i.test(text(el)); });
+      if (btn) btn.click();
+    }
+  }
+
+  function onBattlePage(){
+    if (!hasMinStamina()) return; // NOVO: não inicia sequência se stamina baixa
+
+    console.log('[AutoWave] Iniciando sequência de batalha...');
+
+    function executeStep(stepName, actionFn) {
+      return new Promise(function(resolve) {
+        console.log('[AutoWave] Executando:', stepName);
+        actionFn().then(function(result) {
+          console.log('[AutoWave]', stepName, 'resultado:', result);
+          resolve(result);
+        }).catch(function(error) {
+          console.log('[AutoWave] Erro em', stepName, ':', error);
+          resolve(false);
+        });
+      });
+    }
+
+    // Etapa 1: Join the Battle
+    executeStep('Join Battle', function() {
+      return clickWhenReady(/join\s+the\s+battle/i, 'Join the Battle', 5000);
+    }).then(function(joined) {
+      if (!joined) {
+        console.log('[AutoWave] Falha ao entrar na batalha');
+        return;
+      }
+
+      console.log('[AutoWave] Aguardando', CONFIG.waitAfterJoinMs, 'ms após join...');
+      return delay(CONFIG.waitAfterJoinMs);
+    }).then(function() {
+      if (!hasMinStamina()) return false; // NOVO: rechecagem antes do golpe
+      // Etapa 2: Power Slash
+      return executeStep('Power Slash', function() {
+        return clickWhenReady(CONFIG.powerSlashRegex, 'Power Slash', 5000);
+      });
+    }).then(function(slashed) {
+      if (!slashed) {
+        console.log('[AutoWave] Falha ao usar Power Slash');
+        return;
+      }
+
+      console.log('[AutoWave] Aguardando', CONFIG.waitAfterSlashMs, 'ms após slash...');
+      return delay(CONFIG.waitAfterSlashMs);
+    }).then(function() {
+      // Etapa 3: Back to Wave
+      return executeStep('Back to Wave', function() {
+        return clickWhenReady(CONFIG.backRegex, 'Back to wave', 5000);
+      });
+    }).then(function(backed) {
+      if (backed) {
+        console.log('[AutoWave] Sequência completa!');
+        if (CONFIG.repeat) {
+          setTimeout(function(){ location.reload(); }, 3000);
+        }
+      } else {
+        console.log('[AutoWave] Falha ao voltar para a wave');
+      }
+    });
+  }
+
+  // ---------- router ----------
+  var path = location.pathname.toLowerCase();
+  if (path.indexOf('active_wave.php') !== -1) {
+    setTimeout(onWavePage, 800);
+  } else if (path.indexOf('battle.php') !== -1) {
+    setTimeout(onBattlePage, 800);
+  }
+})();
