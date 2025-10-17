@@ -14,7 +14,7 @@ o bot abaixo não está funcionando como devia, não está procurando monstros n
   'use strict';
 
   var CONFIG = {
-    targetNames: [],
+    targetNames: ['Orc Grunt','Orc Bonecrusher'],
     minHp: 300000,
     waitAfterJoinMs: 5000,
     waitAfterSlashMs: 5000,
